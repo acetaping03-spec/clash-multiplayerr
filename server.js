@@ -45,8 +45,26 @@ let myTeam='blue',roomId=null,online=false,matchStarted=false,botMode=false,sele
 const scene=new THREE.Scene();scene.background=new THREE.Color(0x82d2ea);scene.fog=new THREE.Fog(0x82d2ea,36,80);const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,.1,1000);camera.position.set(0,25,22.5);camera.lookAt(0,0,0);const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;document.body.appendChild(renderer.domElement);
 const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2(),clock=new THREE.Clock(),units=[],buildings=[],projectiles=[],effects=[],water=[],flags=[];
 const ui={cards:document.getElementById('cards'),fill:document.getElementById('elixirFill'),ev:document.getElementById('elixirValue'),blue:document.getElementById('blueScore'),red:document.getElementById('redScore'),timer:document.getElementById('timer'),tip:document.getElementById('tip'),menu:document.getElementById('menu'),status:document.getElementById('statusText')};
-let ws=null;function connect(){const proto=location.protocol==='https:'?'wss':'ws';ws=new WebSocket(proto+'://'+location.host);ws.onopen=()=>{ui.status.textContent='Bağlandı. Maç arayabilirsin.'};ws.onmessage=e=>{const m=JSON.parse(e.data);handleNet(m)};ws.onclose=()=>{online=false;ui.status.textContent='Sunucu bağlantısı koptu.'}}
-function send(type,data={}){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type,...data}))}
+let ws=null;
+function connect(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  ui.status.textContent='Sunucuya bağlanıyor...';
+  ws=new WebSocket(proto+'://'+location.host);
+  ws.onopen=()=>{ui.status.textContent='Bağlandı. Maç arayabilirsin.'};
+  ws.onmessage=e=>{const m=JSON.parse(e.data);handleNet(m)};
+  ws.onerror=()=>{ui.status.textContent='WebSocket hatası. Sayfayı yenile veya server.js açık mı kontrol et.'};
+  ws.onclose=()=>{online=false;ui.status.textContent='Sunucu bağlantısı koptu. Sayfayı yenile.'};
+}
+function send(type,data={}){
+  if(ws&&ws.readyState===1){
+    ws.send(JSON.stringify({type,...data}));
+    return true;
+  }
+  ui.status.textContent='WebSocket bağlı değil. 1 saniye sonra tekrar dene.';
+  tip('Bağlantı hazır değil. Sayfayı yenile veya server.js açık mı kontrol et.');
+  try{connect()}catch(e){}
+  return false;
+}
 function handleNet(m){if(m.type==='queued'){ui.status.textContent='Rakip bekleniyor... Linki arkadaşına gönder.';tip('Rakip bekleniyor. İkinci kişi girince maç başlar.')}if(m.type==='match_found'){roomId=m.roomId;myTeam=m.team;online=true;matchStarted=true;botMode=false;ui.menu.style.display='none';ui.status.textContent='Oda #'+roomId+' • Sen: '+(myTeam==='blue'?'Mavi':'Kırmızı');tip('Rakip bulundu! Oda #'+roomId)}if(m.type==='opponent_left'){tip('Rakip çıktı. Maç bitti.');ui.status.textContent='Rakip bağlantısı koptu.'}if(m.type==='spawn'){remoteSpawn(m)}if(m.type==='spell'){remoteSpell(m)}}
 function mat(c,r=.72,m=.03){return new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m})}function box(p,w,h,d,c,x,y,z,r=.72,m=.03){const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat(c,r,m));o.position.set(x,y,z);o.castShadow=o.receiveShadow=true;p.add(o);return o}function cyl(p,r1,r2,h,c,x,y,z,s=18,r=.72,m=.03){const o=new THREE.Mesh(new THREE.CylinderGeometry(r1,r2,h,s),mat(c,r,m));o.position.set(x,y,z);o.castShadow=o.receiveShadow=true;p.add(o);return o}function cone(p,r,h,c,x,y,z,s=4){const o=new THREE.Mesh(new THREE.ConeGeometry(r,h,s),mat(c,.55,.04));o.position.set(x,y,z);o.rotation.y=Math.PI/4;o.castShadow=o.receiveShadow=true;p.add(o);return o}function sph(p,r,c,x,y,z,sx=1,sy=1,sz=1){const o=new THREE.Mesh(new THREE.SphereGeometry(r,18,12),mat(c));o.position.set(x,y,z);o.scale.set(sx,sy,sz);o.castShadow=o.receiveShadow=true;p.add(o);return o}
 function initWorld(){scene.add(new THREE.HemisphereLight(0xffffff,0x406631,1.23));const sun=new THREE.DirectionalLight(0xffffff,1.25);sun.position.set(-9,19,12);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{near:.5,far:80,left:-24,right:24,top:26,bottom:-26});scene.add(sun);box(scene,ARENA.w+1.8,.9,ARENA.h+1.8,0x2c7139,0,-.48,0);box(scene,ARENA.w+2.7,.6,ARENA.h+2.7,0x1d4f2b,0,-.9,0);grass();river();walls();lanes();ARENA.bridges.forEach(bridge);decor();const cp=new THREE.Mesh(new THREE.PlaneGeometry(ARENA.w,ARENA.h),new THREE.MeshBasicMaterial({visible:false}));cp.rotation.x=-Math.PI/2;cp.name='clickPlane';scene.add(cp)}
@@ -64,7 +82,14 @@ function portraits(type){return{Knight:'<svg viewBox="0 0 100 80"><circle cx="50
 function remoteSpawn(m){createUnit(m.team,m.card,m.x,m.z)}function remoteSpell(m){castFireball(m.team,new THREE.Vector3(m.x,0,m.z))}
 function click(e){if(!matchStarted||gameOver||!selected)return;if(e.target.closest&&e.target.closest('#cards'))return;pointer.x=e.clientX/innerWidth*2-1;pointer.y=-(e.clientY/innerHeight)*2+1;raycaster.setFromCamera(pointer,camera);let hit=raycaster.intersectObject(scene.getObjectByName('clickPlane'))[0];if(!hit)return;let p=hit.point,d=CARD[selected],team=myTeam;if(d.kind==='spell'){if(playerElixir<d.cost){tip('Yeterli iksir yok.');return}playerElixir-=d.cost;castFireball(team,p);if(online)send('spell',{roomId,team,x:p.x,z:p.z})}else{const isBlue=team==='blue',validZone=isBlue?(p.z>ARENA.playerMinZ&&p.z<ARENA.playerMaxZ):(p.z<-ARENA.playerMinZ&&p.z>-ARENA.playerMaxZ);if(!validZone){tip('Sadece kendi tarafına birlik çağırabilirsin.');return}if(playerElixir<d.cost){tip('Yeterli iksir yok.');return}playerElixir-=d.cost;createUnit(team,selected,p.x,p.z);if(online)send('spawn',{roomId,team,card:selected,x:p.x,z:p.z})}if(!e.shiftKey)selected=null;updateUI(0)}
 function animate(){requestAnimationFrame(animate);let dt=Math.min(clock.getDelta(),.04);t+=dt;if(matchStarted&&!gameOver){updateAI(dt);updateUnits(dt);updateBuildings(dt);updateProjectiles(dt)}updateUI(matchStarted?dt:0);updateFx(dt);billboards();cleanup();if(shake>0){shake*=.86;camera.position.x=Math.sin(t*80)*shake;camera.position.z=22.5+Math.cos(t*70)*shake}else{camera.position.x*=.9;camera.position.z+=(22.5-camera.position.z)*.12}camera.lookAt(0,0,0);renderer.render(scene,camera)}
-addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});addEventListener('pointerdown',click);document.getElementById('matchBtn').onclick=()=>send('find_match');document.getElementById('botBtn').onclick=()=>{botMode=true;matchStarted=true;myTeam='blue';ui.menu.style.display='none';ui.status.textContent='Bot test modu'};
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});addEventListener('pointerdown',click);document.getElementById('matchBtn').onclick=()=>{
+  ui.status.textContent='Maç arama isteği gönderiliyor...';
+  tip('Maç aranıyor...');
+  const ok=send('find_match');
+  if(!ok) return;
+  document.getElementById('matchBtn').textContent='Rakip Bekleniyor...';
+};
+document.getElementById('botBtn').onclick=()=>{botMode=true;matchStarted=true;myTeam='blue';ui.menu.style.display='none';ui.status.textContent='Bot test modu'};
 initWorld();setupBuildings();cards();connect();animate();
 </script>
 </body>
